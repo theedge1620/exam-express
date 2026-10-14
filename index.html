@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Workload Balancer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Public+Sans:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="css/styles.css">
+<script>
+  /* Apply a saved theme before first paint to avoid a flash */
+  try { var t = localStorage.getItem("wb-theme"); if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t); } catch (e) {}
+</script>
+</head>
+<body>
+<div class="shell">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      <div class="brand-text">
+        <h1 class="brand-name">Workload Balancer</h1>
+        <div class="brand-sub mono" id="stamp"></div>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span class="save-state" id="save-state"></span>
+      <button type="button" class="btn ghost" data-action="open-import">Import</button>
+      <button type="button" class="btn ghost" data-action="open-export">Export</button>
+      <button type="button" class="btn ghost" data-action="settings">Settings</button>
+      <label class="theme-switch" for="theme-toggle">
+        <input type="checkbox" id="theme-toggle" role="switch" aria-label="Dark theme">
+        <span class="track" aria-hidden="true"><span class="thumb"></span></span>
+        <span class="theme-label" id="theme-label">Light</span>
+      </label>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs" role="tablist" aria-label="Sections"></nav>
+  <div id="banner"></div>
+  <main id="view" class="view" aria-live="polite"></main>
+</div>
+
+<dialog id="modal" class="modal"></dialog>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="js/util.js"></script>
+<script src="js/schema.js"></script>
+<script src="js/sample.js"></script>
+<script src="js/store.js"></script>
+<script src="js/io.js"></script>
+<script src="js/report.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
