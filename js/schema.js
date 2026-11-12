@@ -93,7 +93,8 @@
         { key: "hours", header: "Hours", type: "number", step: 0.25, min: 0 },
         { key: "category", header: "Category", type: "select", options: ["Analysis", "Development", "Review", "Meeting", "Coordination", "Documentation", "Training", "Other"], default: "Analysis" },
         { key: "outcome", header: "Outcome / impact", type: "textarea" },
-        { key: "todoId", header: "To-do ID", type: "hidden" },
+        { key: "todoId", header: "To-do ID", type: "hidden", export: true },
+        { key: "sourceId", header: "Source ID", type: "hidden", export: true }, // e.g. outlook:<uid>@<start> for imported meetings
       ],
     },
   };

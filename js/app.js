@@ -376,6 +376,8 @@
         ${btn("›", "week", 'data-delta="7" aria-label="Next week"', "btn ghost icon")}
         ${thisWeek ? "" : btn("This week", "week", 'data-delta="0"', "btn small")}
       </div>
+      <span class="spacer"></span>
+      ${btn("Import Outlook meetings", "outlook-import", 'title="Add meetings from an Outlook calendar export (.ics or .csv)"', "btn")}
     </div>
 
     <section class="log-summary panel">
@@ -518,6 +520,7 @@
 
   function openModal(title, bodyHTML, onSubmit, submitLabel = "Save", extraFoot = "") {
     const d = modal();
+    d.classList.remove("wide");
     d.innerHTML = `<form method="dialog" class="modal-form" id="modal-form" novalidate>
       <header class="modal-head"><h2>${esc(title)}</h2><button type="button" class="btn ghost icon" data-action="close-modal" aria-label="Close">×</button></header>
       <div class="modal-body">${bodyHTML}</div>
@@ -664,7 +667,7 @@
         <label class="radio"><input type="radio" name="imp-mode" value="replace"><span>Replace everything<small>Current data is removed first</small></span></label>
       </fieldset>
       <div id="imp-summary" class="imp-summary" hidden></div>
-      <p class="hint">Spreadsheet columns are matched by header name (for example Project, Due, Status, Load, Load unit). Rows link to projects by Project ID, or by project name when there is no ID. Export a workbook first to see the expected layout.</p>`;
+      <p class="hint">Spreadsheet columns are matched by header name (for example Project, Due, Status, Load, Load unit). Rows link to projects by Project ID, or by project name when there is no ID. Export a workbook first to see the expected layout. To bring in meetings from an Outlook calendar export, use <a href="#log" data-action="goto" data-tab="log">Weekly log › Import Outlook meetings</a>.</p>`;
     openModal("Import data", body, () => {
       if (!pendingImport) return false;
       const mode = document.querySelector('input[name="imp-mode"]:checked').value;
@@ -717,6 +720,160 @@
     drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); handle(e.dataTransfer.files[0]); });
   }
 
+  /* ================= OUTLOOK MEETINGS ================= */
+  let olState = null; // { source, rows: [{ m, on, hours, projectId, logged }] }
+
+  function openOutlookImport() {
+    const ws = ui.weekOf;
+    olState = { source: null, rows: [] };
+    const cats = WB.schema.log.fields.find((f) => f.key === "category").options;
+    const body = `
+      <label class="drop" id="ol-drop">
+        <input type="file" id="ol-file" accept=".ics,.ical,.vcs,.csv" class="sr">
+        <strong>Choose an Outlook calendar export</strong><span class="muted">or drop it here · .ics or .csv</span>
+        <span class="mono" id="ol-name"></span>
+      </label>
+      <div class="ol-opts">
+        <label><span class="lbl">From</span><input type="date" id="ol-from" value="${ws}"></label>
+        <label><span class="lbl">To</span><input type="date" id="ol-to" value="${U.addDays(ws, 6)}"></label>
+        <label><span class="lbl">Default category</span><select id="ol-cat">${cats.map((o) => `<option ${o === "Meeting" ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></label>
+        <label class="check ol-allday"><input type="checkbox" id="ol-allday"> Include all-day events</label>
+      </div>
+      <div id="ol-list" class="ol-list" hidden></div>
+      <details class="hint ol-help"><summary>How to export from Outlook</summary>
+        <p><strong>Classic Outlook (Windows):</strong> File › Open &amp; Export › Import/Export › Export to a file › Comma Separated Values › Calendar. Pick the date range when asked. Or open the calendar and use File › Save Calendar for an .ics file.</p>
+        <p><strong>New Outlook / Outlook on the web:</strong> drag a meeting to your desktop for a single .ics, or publish the calendar (Settings › Calendar › Shared calendars) and download the ICS link.</p>
+        <p>Recurring meetings in .ics files are expanded for the dates above. Meetings already in the log are skipped, so you can import the same file again later.</p>
+      </details>`;
+    openModal("Import Outlook meetings", body, olSubmit, "Add to log");
+    modal().classList.add("wide");
+    $("#modal-submit").disabled = true;
+
+    const handle = async (file) => {
+      if (!file) return;
+      $("#ol-name").textContent = file.name;
+      try {
+        olState.source = await WB.outlook.read(file);
+        olRefresh();
+      } catch (err) {
+        olState.source = null;
+        const box = $("#ol-list");
+        box.hidden = false;
+        box.innerHTML = `<p class="imp-summary"><strong class="tone-text-bad">Could not read this file.</strong> ${esc(err.message || "")}</p>`;
+        $("#modal-submit").disabled = true;
+      }
+    };
+    const fileInput = $("#ol-file");
+    fileInput.addEventListener("change", () => handle(fileInput.files[0]));
+    const drop = $("#ol-drop");
+    drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+    drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+    drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); handle(e.dataTransfer.files[0]); });
+    for (const id of ["ol-from", "ol-to", "ol-allday"]) $("#" + id).addEventListener("change", olRefresh);
+
+    // Row edits (checkbox, hours, project) update state without re-rendering the list
+    $("#ol-list").addEventListener("change", (e) => {
+      const li = e.target.closest("[data-i]");
+      if (!li) return;
+      const r = olState.rows[+li.dataset.i];
+      if (e.target.matches(".ol-on")) r.on = e.target.checked;
+      if (e.target.matches(".ol-h")) r.hours = U.num(e.target.value);
+      if (e.target.matches(".ol-p")) r.projectId = e.target.value;
+      li.classList.toggle("off", !r.on);
+      olSummary();
+    });
+  }
+
+  function olRefresh() {
+    if (!olState || !olState.source) return;
+    let from = $("#ol-from").value, to = $("#ol-to").value;
+    if (!from || !to) return;
+    if (from > to) [from, to] = [to, from];
+    const allDay = $("#ol-allday").checked;
+    const loggedKeys = new Set(S.state.log.map((l) => l.sourceId).filter(Boolean));
+    const prev = new Map(olState.rows.map((r) => [r.m.key, r]));
+    const list = WB.outlook.prepare(olState.source.meetings(from, to), from, to).filter((m) => allDay || !m.allDay);
+    olState.rows = list.map((m) => {
+      const kept = prev.get(m.key);
+      if (kept) return Object.assign(kept, { m });
+      const g = WB.outlook.guessProject(m, S.state);
+      const logged = loggedKeys.has(m.key);
+      return { m, logged, on: !logged && m.showAs !== "Free" && !m.allDay && m.minutes > 0, hours: m.hours, projectId: g.projectId || "", category: g.category || "" };
+    });
+    olRender(from, to);
+  }
+
+  function olRender(from, to) {
+    const box = $("#ol-list");
+    box.hidden = false;
+    if (!olState.rows.length) {
+      box.innerHTML = `<p class="imp-summary">No meetings between ${esc(U.fmtDate(from))} and ${esc(U.fmtDate(to, true))}. Adjust the dates or check the export's date range.</p>`;
+      $("#modal-submit").disabled = true;
+      return;
+    }
+    let lastDate = "";
+    const items = olState.rows.map((r, i) => {
+      const m = r.m;
+      const head = m.date !== lastDate ? `<li class="ol-day">${esc(U.fmtDow(m.date))} <span class="mono">${esc(U.fmtDate(m.date))}</span></li>` : "";
+      lastDate = m.date;
+      const tags = [
+        r.logged ? `<span class="pill tone-ok">In log</span>` : "",
+        m.showAs !== "Busy" ? `<span class="pill tone-neutral">${esc(m.showAs)}</span>` : "",
+      ].join("");
+      const meta = [m.location, m.organizer].filter(Boolean).map(esc).join(" · ");
+      return head + `<li class="ol-row ${r.on ? "" : "off"} ${r.logged ? "logged" : ""}" data-i="${i}">
+        <label class="check big"><input type="checkbox" class="ol-on" ${r.on ? "checked" : ""} ${r.logged ? "disabled" : ""}><span class="sr">Import</span></label>
+        <div class="ol-main"><span class="ol-t">${esc(m.subject)}</span>${tags}
+          <span class="ol-m"><span class="mono">${esc(WB.outlook.timeLabel(m))}</span>${meta ? " · " + meta : ""}</span></div>
+        <label class="ol-hrs"><span class="sr">Hours</span><input type="number" class="ol-h" min="0" step="0.25" value="${r.hours}" ${r.logged ? "disabled" : ""}><small>h</small></label>
+        <label class="ol-proj"><span class="sr">Project</span><select class="ol-p" ${r.logged ? "disabled" : ""}>${projectOptions(r.projectId)}</select></label>
+      </li>`;
+    }).join("");
+    box.innerHTML = `<div class="ol-bar"><span id="ol-sum"></span><span class="spacer"></span>
+        ${btn("Select all", "ol-all", 'data-on="1"', "btn small ghost")}${btn("Select none", "ol-all", 'data-on="0"', "btn small ghost")}</div>
+      <ul class="ol-items">${items}</ul>`;
+    olSummary();
+  }
+
+  function olSetAll(on) {
+    if (!olState) return;
+    for (const r of olState.rows) if (!r.logged) r.on = on;
+    olRender($("#ol-from").value, $("#ol-to").value);
+  }
+
+  function olSummary() {
+    const sel = olState.rows.filter((r) => r.on && !r.logged);
+    const hrs = sel.reduce((s, r) => s + U.num(r.hours), 0);
+    const logged = olState.rows.filter((r) => r.logged).length;
+    const sum = $("#ol-sum");
+    if (sum) sum.innerHTML = `<strong class="mono">${sel.length}</strong> of ${olState.rows.length} selected · <span class="mono">${U.fmtHrs(hrs)} h</span>${logged ? ` · ${logged} already in log` : ""}`;
+    const b = $("#modal-submit");
+    b.disabled = !sel.length;
+    b.textContent = sel.length ? `Add ${sel.length} to log` : "Add to log";
+  }
+
+  function olSubmit() {
+    if (!olState) return false;
+    const sel = olState.rows.filter((r) => r.on && !r.logged);
+    if (!sel.length) return false;
+    const defCat = $("#ol-cat").value;
+    const have = new Set(S.state.log.map((l) => l.sourceId).filter(Boolean));
+    let added = 0;
+    for (const r of sel) {
+      if (have.has(r.m.key)) continue;
+      have.add(r.m.key);
+      S.state.log.push({
+        id: U.uid("l"), date: r.m.date, title: r.m.subject, projectId: r.projectId,
+        hours: U.num(r.hours), category: r.category || defCat, outcome: "", todoId: "", sourceId: r.m.key,
+      });
+      added++;
+    }
+    const first = sel[0].m.date;
+    if (U.weekStart(first) !== ui.weekOf && !sel.some((r) => U.weekStart(r.m.date) === ui.weekOf)) ui.weekOf = U.weekStart(first);
+    S.commit();
+    toast(`Added ${added} meeting${added === 1 ? "" : "s"} to the log`);
+  }
+
   /* ================= TOAST ================= */
   let toastTimer;
   function toast(msg) {
@@ -752,6 +909,7 @@
       case "tab":
       case "goto":
         e.preventDefault();
+        if (el.closest("#modal")) closeModal();
         setTab(el.dataset.tab);
         break;
       case "add":
@@ -803,6 +961,12 @@
         break;
       case "open-export":
         openExport();
+        break;
+      case "outlook-import":
+        openOutlookImport();
+        break;
+      case "ol-all":
+        olSetAll(el.dataset.on === "1");
         break;
       case "close-modal":
         closeModal();

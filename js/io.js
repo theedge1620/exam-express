@@ -41,7 +41,7 @@
   io.toRow = (entity, rec) => {
     const row = {};
     for (const f of WB.schema[entity].fields) {
-      if (f.type === "hidden" && f.key !== "todoId") continue;
+      if (f.type === "hidden" && !f.export) continue;
       let v = rec[f.key];
       if (f.type === "bool") v = v ? "Yes" : "No";
       if (f.type === "number") v = v === "" || v === undefined ? "" : U.num(v);
@@ -115,7 +115,7 @@
   function headerList(e) {
     const out = [];
     for (const f of WB.schema[e].fields) {
-      if (f.type === "hidden" && f.key !== "todoId") continue;
+      if (f.type === "hidden" && !f.export) continue;
       out.push(f.header);
       if (f.type === "ref") out.push("Project");
     }
